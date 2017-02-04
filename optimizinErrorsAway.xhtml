@@ -1,0 +1,1154 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xml:lang="en" xmlns="http://www.w3.org/1999/xhtml">
+
+  <head>
+    <meta charset="utf-8" />
+
+    <title>Optimizing Errors Away</title>
+
+    <meta name="description" content="Describing a HotSpot bug caused by combined escape analysis and intrinsic optimzations" />
+    <meta name="author" content="Volker H. Simonis" />
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui" />
+
+    <link rel="stylesheet" href="reveal.js/css/reveal.css" />
+    <link rel="stylesheet" href="reveal.js/css/theme/jbreak2016.css" id="theme" />
+
+    <!-- Code syntax highlighting -->
+    <link rel="stylesheet" href="reveal.js/lib/css/monokai_sublime.css" />
+
+  <style type="text/css">
+.scrollable {
+    bottom: 0px;
+    overflow-y: auto  !important;
+    overflow-x: hidden !important;
+}
+
+.reveal .slides > section.demo,
+.reveal .slides > section > section.demo {
+    padding: 0;
+    height: 100%;
+}
+
+.reveal .big {
+    font-size: .8em;
+    line-height: 1.3em;
+}
+
+.reveal pre.console {
+    background-color: black;
+    color: #00ff00;
+}
+
+code.terminal .hljs-title {
+    color: #00ff00;
+}
+
+.reveal pre.noshadow {
+    border-radius: 0;
+    box-shadow: unset;
+}
+
+.reveal pre code {
+    max-height: 100%;
+}
+.bold {
+    font-weight: bold;
+}
+
+.reveal .outline_white {
+    color: white;
+    text-shadow:
+        -2px -2px 0 #000,
+         2px -2px 0 #000,
+        -2px  2px 0 #000,
+         2px  2px 0 #000;
+    min-height: 1.1em;
+    text-align: center;
+}
+.reveal .outline_black {
+    color: black;
+    text-shadow:
+        -2px -2px 0 #fff,
+         2px -2px 0 #fff,
+        -2px  2px 0 #fff,
+         2px  2px 0 #fff;
+    min-height: 1.1em;
+    text-align: center;
+}
+mark.orange {
+    color: black;
+    background-color: orange;
+}
+
+  table.calling_hirarchy {
+//    font-family: monospace, arial, helvetica, sans-serif;
+//    background-color: #ffffff;
+    font-size: smaller;
+    border-collapse: collapse;
+    margin: 0px auto;
+    padding: 2px;
+    width: auto;
+    overflow: auto;
+    border: none;
+  }
+
+  table.calling_hirarchy tr {
+    border: none;
+  }
+
+  table.calling_hirarchy td {
+    padding: 4px;
+//    font-family: monospace;
+  }
+
+  td.indent_level_0 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #a0a0a0;
+  }
+  td.indent_level_1 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #a8a8a8;
+  }
+  td.indent_level_2 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #b0b0b0;
+  }
+  td.indent_level_3 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #b8b8b8;
+  }
+  td.indent_level_4 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #c0c0c0;
+  }
+  td.indent_level_5 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #c8c8c8;
+  }
+  td.indent_level_6 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #d0d0d0;
+  }
+  td.indent_level_7 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #d8d8d8;
+  }
+  td.indent_level_8 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #e0e0e0;
+  }
+  td.indent_level_9 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #e8e8e8;
+  }
+  td.indent_level_10 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #f0f0f0;
+  }
+  td.indent_level_11 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #f8f8f8;
+  }
+  td.indent_level_12 {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #ffffff;
+  }
+  td.functionCall {
+//    font-weight: bold;
+    color: darkblue;
+  }
+  td.javaCall {
+    font-weight: bold;
+    color: darkgreen;
+  }
+  td.comment {
+    font-style: italic;
+    color: maroon;
+  }
+  td.highlight {
+    border-style: solid;
+    border-width: 2px;
+    background-color: #a0ffa0;
+  }
+  table.calling_hirarchy td[rowspan] {
+    border-style: none;
+    border-width: 0;
+    border-left: dotted;
+    border-left-width: 2px;
+  }
+
+  </style>
+
+    <!-- Printing and PDF exports -->
+    <script>
+      var link = document.createElement( 'link' );
+      link.rel = 'stylesheet';
+      link.type = 'text/css';
+      link.href = window.location.search.match( /print-pdf/gi ) ? 'reveal.js/css/print/pdf.css' : 'reveal.js/css/print/paper.css';
+      document.getElementsByTagName( 'head' )[0].appendChild( link );
+    </script>
+
+    <!--[if lt IE 9]>
+    <script src="reveal.js/lib/js/html5shiv.js"></script>
+    <![endif]-->
+
+    <!--
+      Issue #1105: Keyboard shortcut to skip forward/back over fragments #1173
+      https://github.com/hakimel/reveal.js/pull/1173
+    -->
+  </head>
+
+<!--
+;; select this code and do 'M-x eval-region'
+(defun make-fragment (p1 p2)
+  "Wraps the selection into 'fragment' <span>s."
+  (interactive "r")
+  (setq inputStr (buffer-substring-no-properties p1 p2))
+  (setq inputStr (replace-regexp-in-string "&" "&amp;" inputStr))
+  (setq inputStr (replace-regexp-in-string "<" "&lt;" inputStr))
+  (setq inputStr (replace-regexp-in-string ">" "&gt;" inputStr))
+  (setq resultStr (concat "<span class=\"fragment\">" (concat inputStr "</span>")))
+  (delete-region p1 p2)
+  (insert resultStr)
+)
+
+(global-set-key (kbd "C-f") 'make-fragment)
+;; revert key-binding
+;; (global-set-key (kbd "C-f") 'forward-char)
+
+;; (vhs) The following is required to make 'C-c C-t' insert <code> tags without
+;; newlines. 'sgml-tag-alist' is the "file-local" version of 'html-tag-alist'
+(add-to-list 'html-tag-alist '("code"))
+(add-to-list 'sgml-tag-alist '("code"))
+
+-->
+
+  <body>
+
+    <div class="reveal">
+
+      <!-- Any section element inside of this container is displayed as a slide -->
+      <div class="slides">
+
+        <section>
+          <h1>Optimizing Errors Away<br/></h1>
+          <p>
+            <small>Volker Simonis, SAP / <a href="mailto:volker.simonis@gmail.com">volker.simonis@gmail.com</a></small>
+          </p>
+        </section>
+
+        <section>
+
+            <h2>Outline</h2>
+
+            <ul>
+              <li>Escape Analysis</li>
+              <li>Intrinsics</li>
+              <li><code>System.arraycopy()</code></li>
+              <li>Specification..</li>
+              <li>..and too much optimization</li>
+              <li>Fixing the bug</li>
+            </ul>
+
+        </section>
+
+
+        <section style="height: 100%;">
+
+          <section>
+
+            <h2>Escape Analysis</h2>
+
+            <ul>
+              <li><code>-XX:+DoEscapeAnalysis</code> (enabled by default)</li>
+              <li>Detects <code>NoEscape</code>, <code>ArgEscape</code> or <code>GlobalEscape</code> state for locals</li>
+              <li><code>-XX:+EliminateAllocations</code>,<br/> <code>-XX:+OptimizePtrCompare</code>, <code>-XX:+EliminateLocks</code>, ...</li>
+              <li>Heavily depends on inlining (especially <code>EliminateAllocations</code>)!</li>
+              <li>Idea: <em>J. Shoi</em>, <em>M. Gupta</em>, <em>M. Seffano</em>, <em>V. Sreedhar</em>, <em>S. Midkiff</em>,<br/>
+                <a href="http://www.cc.gatech.edu/~harrold/6340/cs6340_fall2009/Readings/choi99escape.pdf">"Escape Analysis for Java"</a></li>
+              <li>Implementation: <code>opt/escape.{cpp,hpp}</code> and <code>ci/bcEscapeAnaylzer.{cpp,hpp}</code></li>
+            </ul>
+
+          </section>
+
+          <section>
+
+            <h2>Scalar Replacement</h2>
+
+            <pre class="big noshadow" style="height: 70%;" data-trim="true">
+              <code class="java" text-trim="true" data-noescape="true">
+<![CDATA[
+private static int dot(int[] a, int[] b) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+public static int scalarReplace(int x) {
+    int[] a = new int[] { x, x, x };
+    return dot(a, a);
+}
+]]>
+              </code>
+            </pre>
+
+          </section>
+
+<!--
+/share/output-jdk9-dev-dbg/images/jdk/bin/java -showversion -cp /media/sf_C_DRIVE/Users/D046063/public_html/hotspot/FOSDEM2017/git/examples/bin -Xbatch -XX:+PrintCompilation -XX:-UseCompressedOops -XX:-TieredCompilation -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" -XX:CompileCommand="dontinline org.simonis.ScalarReplacement::dot" -XX:CompileCommand="option org.simonis.ScalarReplacement::scalarReplace PrintOptoAssembly" -XX:+PrintInlining -XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations -XX:+Verbose -XX:-UseTLAB org.simonis.ScalarReplacement scalarReplace 2>&1 | less
+
+-XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace"
+
+00c     movl    RBP, RSI        # spill first argument 'x'
+00e     movl    RDX, #3 # int
+013     movq    RSI, precise klass [I
+01f     call,static  wrapper for: _new_array_Java
+
+024     movl    [RAX + #32 (8-bit)], RBP        # a[0] = x
+027     movl    [RAX + #24 (8-bit)], RBP        # a[1] = x
+02a     movl    [RAX + #28 (8-bit)], RBP        # a[2] = x
+
+02d     movq    RSI, RAX        # spill
+030     movq    RDX, RAX        # spill
+033     call,static  org.simonis.ScalarReplacement::dot
+
+
+/share/output-jdk9-dev-dbg/images/jdk/bin/java -showversion -cp /media/sf_C_DRIVE/Users/D046063/public_html/hotspot/FOSDEM2017/git/examples/bin -Xbatch -XX:+PrintCompilation -XX:-UseCompressedOops -XX:-TieredCompilation -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::dot" -XX:CompileCommand="option org.simonis.ScalarReplacement::scalarReplace PrintOptoAssembly" -XX:-DoEscapeAnalysis -XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations -XX:+Verbose -XX:-UseTLAB org.simonis.ScalarReplacement scalarReplace 2>&1 | less
+
+-XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::dot" -XX:-DoEscapeAnalysis
+
+00c     movl    RBP, RSI        # spill first argument 'x'
+00e     movl    RDX, #3 # int
+013     movq    RSI, precise klass [I
+01f     call,static  wrapper for: _new_array_Java
+
+024     movl    [RAX + #32 (8-bit)], RBP        # a[0] = x
+027     movl    [RAX + #28 (8-bit)], RBP        # a[1] = x
+02a     movl    [RAX + #24 (8-bit)], RBP        # a[2] = x
+
+02d     imull   RBP, RBP        # RBP  = x * x
+030     movl    RAX, RBP        # RAX  = x * x
+032     addl    RAX, RBP        # RAX += x * x
+034     addl    RAX, RBP        # RAX += x * x
+
+
+/share/output-jdk9-dev-dbg/images/jdk/bin/java -showversion -cp /media/sf_C_DRIVE/Users/D046063/public_html/hotspot/FOSDEM2017/git/examples/bin -Xbatch -XX:+PrintCompilation -XX:-UseCompressedOops -XX:-TieredCompilation -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::dot" -XX:CompileCommand="option org.simonis.ScalarReplacement::scalarReplace PrintOptoAssembly" -XX:+DoEscapeAnalysis -XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations -XX:+Verbose -XX:-UseTLAB org.simonis.ScalarReplacement scalarReplace 2>&1 | less
+
+-XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::dot" -XX:+DoEscapeAnalysis
+
+00c     imull   RSI, RSI        # RSI  = x * x
+00f     movl    RAX, RSI        # RAX  = x * x
+011     addl    RAX, RSI        # RAX += x * x
+013     addl    RAX, RSI        # RAX += x * x
+
+-->
+
+          <section class="demo">
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java -XX:CompileCommand=\
+  "compileonly org.simonis.ScalarReplacement::scalarReplace" \
+  org.simonis.ScalarReplacement
+<span class="fragment">...
+movl    RBP, RSI                          // RBP = x
+movl    RDX, #3 # int                     // arg1 = 3
+movq    RSI, precise klass [I             // arg2 = '[I'
+call,static  wrapper for: _new_array_Java // RAX = a[]
+
+movl    [RAX + #32 (8-bit)], RBP          // a[0] = x
+movl    [RAX + #24 (8-bit)], RBP          // a[1] = x
+movl    [RAX + #28 (8-bit)], RBP          // a[2] = x
+
+movq    RSI, RAX                          // arg1 = a[]
+movq    RDX, RAX                          // arg2 = a[]
+call,static  org.simonis.ScalarReplacement::dot
+...</span>
+              </code>
+            </pre>
+          </section>
+
+          <section class="demo">
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java -XX:-DoEscapeAnalysis \
+  -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" \
+  -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::dot" \
+  org.simonis.ScalarReplacement
+<span class="fragment">...
+movl    RBP, RSI                          // RBP = x
+movl    RDX, #3 # int                     // arg1 = 3
+movq    RSI, precise klass [I             // arg2 = '[I'
+call,static  wrapper for: _new_array_Java
+
+movl    [RAX + #32 (8-bit)], RBP          // a[0] = x
+movl    [RAX + #28 (8-bit)], RBP          // a[1] = x
+movl    [RAX + #24 (8-bit)], RBP          // a[2] = x
+
+imull   RBP, RBP                          // RBP  = x * x
+movl    RAX, RBP                          // RAX  = x * x
+addl    RAX, RBP                          // RAX += x * x
+addl    RAX, RBP                          // RAX += x * x
+...</span>
+              </code>
+            </pre>
+          </section>
+
+          <section class="demo">
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java -XX:+DoEscapeAnalysis -XX:+EliminateAllocations \
+  -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::scalarReplace" \
+  -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::dot" \
+  org.simonis.ScalarReplacement
+<span class="fragment">...
+imull   RSI, RSI        // RSI  = x * x
+movl    RAX, RSI        // RAX  = x * x
+addl    RAX, RSI        // RAX += x * x
+addl    RAX, RSI        // RAX += x * x
+...</span>
+              </code>
+            </pre>
+          </section>
+
+          <section class="demo">
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java -XX:+DoEscapeAnalysis -XX:+EliminateAllocations \
+  -XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations ... \
+  org.simonis.ScalarReplacement
+<span class="fragment">...
+EA: 2 iterations to build connection graph with
+    115 nodes and worklist size 10
+
+Connection graph for org.simonis.ScalarReplacement::scalarReplace
+JavaObject NoEscape(NoEscape) 41 AllocateArray
+  = org.simonis.ScalarReplacement::scalarReplace@bci:1
+
+Scalar 41 AllocateArray
+  = org.simonis.ScalarReplacement::scalarReplace@bci:1
+++++ Eliminated: 41 AllocateArray
+...
+imull   RSI, RSI        // RSI  = x * x
+movl    RAX, RSI        // RAX  = x * x
+addl    RAX, RSI        // RAX += x * x
+addl    RAX, RSI        // RAX += x * x
+...</span>
+              </code>
+            </pre>
+          </section>
+
+        </section>
+
+
+        <section style="height: 100%;">
+
+          <section>
+
+            <h2>Intrinsics</h2>
+
+            <blockquote>
+              <p style="text-align:justify">
+                &ldquo; ..an <span class="bold">intrinsic</span> function (a.k.a.
+                <span class="bold">builtin</span> function) is a function
+                available for use in a given programming language whose
+                implementation is handled specially by the compiler. Typically, it
+                substitutes a sequence of automatically generated instructions for
+                the original function call.. &rdquo;
+              </p>
+            </blockquote>
+
+            <blockquote>
+              <p style="text-align:justify">
+                &ldquo; ..the compiler has an intimate knowledge of the intrinsic
+                function and can therefore better integrate it and optimize it for
+                the situation.. &rdquo;
+              </p>
+              <footer>
+                <cite><a href="https://en.wikipedia.org/wiki/Intrinsic_function">Intrinsic function - Wikipedia</a></cite>
+              </footer>
+            </blockquote>
+
+          </section>
+
+          <section style="height: 100%;">
+
+            <h2>HotSpot Intrinsics</h2>
+
+            <ul>
+              <li>Only for system classes!</li>
+              <li>Must be annotated with <code>jdk.internal.HotSpotIntrinsicCandidate</code> (since Java 9)
+                <ul>
+                  <li>Checked by <code>-XX:+CheckIntrinsics</code></li>
+                </ul>
+              </li>
+              <li>See: <code>src/share/vm/classfile/vmSymbols.hpp</code> for a full list</li>
+              <li>Library intrinsics (~260)
+                <ul>
+                  <li>Library methods replaced by assembly, IR or both</li>
+                </ul>
+              </li>
+              <li>Bytecode intrinsics (~40)
+                <ul>
+                  <li>Late/always inlining candidates (e.g. <code>StringBuffer::*</code>, boxing/unboxing methods)</li>
+                  <li>See: <code>Compile::should_delay_string_inlining()</code> in <code>doCall.cpp</code></li>
+                  <li>See: <code>InlineTree::should_inline()</code> in <code>bytecodeInfo.cpp</code></li>
+                </ul>
+              </li>
+            </ul>
+
+          </section>
+
+          <section>
+            <h2 style="text-transform: none;"><code>System.arraycopy()</code></h2>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="java" text-trim="true">
+<![CDATA[
+@HotSpotIntrinsicCandidate
+public static native void
+arraycopy(Object src,  int  srcPos,                        
+          Object dest, int destPos, int length);
+]]>
+              </code>
+            </pre>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="cpp" text-trim="true">
+<![CDATA[
+JVM_ArrayCopy(JNIEnv *e, jclass c, jobject src, jint src_p,
+              jobject dst, jint dst_p, jint length) {
+  // Check if we have null pointers
+  if (src == NULL || dst == NULL) {
+    THROW(vmSymbols::java_lang_NullPointerException());
+  }
+  arrayOop s = arrayOop(JNIHandles::resolve_non_null(src));
+  arrayOop d = arrayOop(JNIHandles::resolve_non_null(dst));
+  // Do copy
+  s->klass()->copy_array(s, src_p, d, dst_p, length);
+}
+]]>
+              </code>
+            </pre>
+          </section>
+
+          <section>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="java" text-trim="true">
+<![CDATA[
+public static void arrayCopy1(int[] src, int[] dst) {      
+    System.arraycopy(src, 0, dst, 0, 8);
+}
+]]>
+              </code>
+            </pre>
+
+<!--
+/share/output-jdk9-hs-comp-dbg/images/jdk/bin/java -XX:+UnlockDiagnosticVMOptions -showversion -cp /media/sf_C_DRIVE/Users/D046063/public_html/hotspot/FOSDEM2017/git/examples/bin -Xbatch -XX:-UseOnStackReplacement -XX:+PrintCompilation -XX:+PrintInlining -XX:-UseCompressedOops -XX:+PrintEscapeAnalysis -XX:+EliminateAllocations -XX:+PrintEliminateAllocations -XX:CompileCommand="option org.simonis.ScalarReplacement::arrayCopy1 PrintOptoAssembly" -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::arrayCopy1" -XX:DisableIntrinsic=_arraycopy org.simonis.ScalarReplacement arrayCopy1
+-->
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java -XX:DisableIntrinsic=_arraycopy \
+  org.simonis.ScalarReplacement arrayCopy1
+<span class="fragment">
+...                            // arg0 already contains src
+00c   	movq    RCX, RDX       // arg2 = dst
+00f   	movl    R9, #8         // arg4 = 8
+015   	xorl    RDX, RDX       // arg1 = 0
+017   	xorl    R8, R8         // arg3 = 0
+01b   	call,static  java.lang.System::arraycopy
+...</span>
+
+
+
+
+<span style="color: black">.</span>
+              </code>
+            </pre>
+          </section>
+
+          <section>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="java" text-trim="true">
+<![CDATA[
+public static void arrayCopy1(int[] src, int[] dst) {      
+    System.arraycopy(src, 0, dst, 0, 8);
+}
+]]>
+              </code>
+            </pre>
+
+<!--
+/share/output-jdk9-hs-comp-dbg/images/jdk/bin/java -XX:+UnlockDiagnosticVMOptions -showversion -cp /media/sf_C_DRIVE/Users/D046063/public_html/hotspot/FOSDEM2017/git/examples/bin -Xbatch -XX:-UseOnStackReplacement -XX:+PrintCompilation -XX:+PrintInlining -XX:-UseCompressedOops -XX:+PrintEscapeAnalysis -XX:+EliminateAllocations -XX:+PrintEliminateAllocations -XX:CompileCommand="option org.simonis.ScalarReplacement::arrayCopy1 PrintOptoAssembly" -XX:CompileCommand="compileonly org.simonis.ScalarReplacement::arrayCopy1" -XX:DisableIntrinsic=_arraycopyXXX org.simonis.ScalarReplacement arrayCopy1
+-->
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java \
+  org.simonis.ScalarReplacement arrayCopy1
+<span class="fragment">...
+movl   R10, [RSI + #16 (8-bit)]  // R10 = src.length
+movl   R8, [RDX + #16 (8-bit)]   // R8  = dst.length
+cmpl   R10, #8                   // if src.length &lt; 8 throw
+jb,us  _throw_exception
+cmpl   R8, #8                    // if dst.length &lt; 8 throw
+jb,us  _throw_exception
+movl   R10, [RSI + #24 (8-bit)]  // R10 = src[0]
+movl   [RDX + #24 (8-bit)], R10  // dst[0] = R10
+...
+movl   R11, [RSI + #52 (8-bit)]  // R11 = src[7]
+movl   [RDX + #52 (8-bit)], R11  // dst[7] = R11
+...</span>
+              </code>
+            </pre>
+          </section>
+
+        </section>
+
+        <section style="height: 100%;">
+
+          <section>
+            <h2 style="text-transform: none;"><code>System.arraycopy()</code> - Specification</h2>
+<!--
+            <p style="text-align:center">..if any of the following is true, an IndexOutOfBoundsException is thrown..</p>
+
+            <ul style="display:inline-block">
+              <li>The <code>srcPos</code> argument is negative.</li>
+              <li>The <code>destPos</code> argument is negative.</li>
+              <li style="font-weight: bold;">The <code>length</code> argument is negative.</li>
+              <li><code>srcPos+length</code> is greater than <code>src.length</code>.</li>
+              <li><code>destPos+length</code> is greater than <code>dest.length</code>.</li>
+            </ul>
+-->
+            <img width="100%" class="plain" data-src="images/System_arracopy_IOOBE_ul.png" alt="System.arraycopy() API Definition"/>
+
+            <p>see <a href="http://docs.oracle.com/javase/8/docs/api/java/lang/System.html#arraycopy-java.lang.Object-int-java.lang.Object-int-int-">
+                http://docs.oracle.com/javase/8/docs/api/java/lang/System.html#arraycopy</a></p>
+
+          </section>
+
+          <section>
+            <h2 style="text-transform: none;"><code>System.arraycopy()</code> - Test (C2)</h2>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="java" text-trim="true">
+<![CDATA[
+public static boolean arrayCopy4(int[] src, int length) {
+  try {
+    System.arraycopy(src, 3, new int[8], 5, length);
+    return false;
+  } catch (IndexOutOfBoundsException e) {
+    return true;
+  }
+}
+
+public static void main(String args[]) {
+  for (int i = 0; i < 20_000; i++) {
+    if (arrayCopy4(new int[128], -1) == false) {
+      System.out.println("Error in iteration " + i);
+      System.out.println("Expected IndexOutOfBoundsExept");
+    }
+  }
+]]>
+              </code>
+            </pre>
+          </section>
+
+          <section>
+            <h2 style="text-transform: none;">Violating the Specification (C2)</h2>
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java \
+  org.simonis.ScalarReplacement arrayCopy4
+<span class="fragment">Error in iteration 5376
+Expected IndexOutOfBoundsException</span>
+
+<span class="fragment">$ java \
+  -XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations \
+  org.simonis.ScalarReplacement arrayCopy4</span>
+<span class="fragment">JavaObject NoEscape 43 AllocateArray arrayCopy4@bci:4
+Eliminated: 43 AllocateArray
+Error in iteration 5376
+Expected IndexOutOfBoundsException</span>
+
+<span class="fragment">$ java -XX:DisableIntrinsic=_arraycopy \
+  org.simonis.ScalarReplacement arrayCopy4</span>
+<span class="fragment">$ </span><span class="fragment">java -XX:-EliminateAllocations \
+  org.simonis.ScalarReplacement arrayCopy4</span>
+<span class="fragment">$ </span>
+              </code>
+            </pre>
+          </section>
+
+          <section class="demo">
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="java" text-trim="true">
+<![CDATA[
+public static boolean arrayCopy4(int[] src, int length) {
+  try {
+    System.arraycopy(src, 3, new int[8], 5, length);
+]]>
+              </code>
+            </pre>
+
+            <pre class="big noshadow" style="margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java -XX:+PrintOptoAssembly \
+  org.simonis.ScalarReplacement arrayCopy4
+<span class="fragment">...
+movq    R11, RSI          // R11 = src (arg0)
+movl    R10, [RSI + #12]  // R10 = src.length
+        NullCheck RSI
+movl    R8, RDX           // R8  = length (arg1)
+addl    R8, #3            // R8 += 3 (src_pos)
+cmpl    R10, R8           // if src.length &lt; src_pos+length
+jb,us   _throw_exception  // throw exception
+movl    R10, RDX          // R10 = length (arg1)
+addl    R10, #5           // R8 += 3 (dst_pos)
+cmpl    R10, #8           // if dst_pos+length &gt; 8
+jnbe,us _throw_exception  // throw exception
+...</span>
+              </code>
+            </pre>
+          </section>
+
+          <section style="padding: 0; height: 100%;">
+<table class="calling_hirarchy">
+  <tr>
+    <td colspan="10" class="functionCall  indent_level_3">
+      <code>Compile::Compile(compiler=0x7ffff01a0a60, target=0x7fffc4299130)</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="17">&nbsp;</td>
+    <td colspan="9" class="functionCall  indent_level_4">
+    <code>ParseGenerator::generate()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="8">&nbsp;</td>
+    <td colspan="8" class="functionCall  indent_level_5">
+      <code>Parse::Parse(caller=0x7fffc440de00, parse_method=0x7fffc4299130)</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="7">&nbsp;</td>
+    <td colspan="7" class="functionCall  indent_level_6">
+      <code>Parse::do_all_blocks()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="6">&nbsp;</td>
+    <td colspan="6" class="functionCall  indent_level_7">
+      <code>Parse::do_one_block()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="5">&nbsp;</td>
+    <td colspan="5" class="functionCall  indent_level_8">
+      <code>Parse::do_one_bytecode()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="4">&nbsp;</td>
+    <td colspan="4" class="functionCall  indent_level_9">
+      <code>Parse::do_call()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="3">&nbsp;</td>
+    <td colspan="3" class="functionCall  indent_level_10">
+      <code>LibraryIntrinsic::generate()          <span style="color:green">&lt;-- Intrinsification</span></code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="2">&nbsp;</td>
+    <td colspan="2" class="functionCall  indent_level_11">
+      <code>LibraryCallKit::try_to_inline(id=vmIntrinsics::_arraycopy)</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="1">&nbsp;</td>
+    <td colspan="1" class="functionCall  indent_level_12">
+      <code><mark>LibraryCallKit::inline_arraycopy()</mark></code>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="9" class="functionCall  indent_level_4">
+      <code>Compile::optimze()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="7">&nbsp;</td>
+    <td colspan="8" class="functionCall  indent_level_5">
+    <code>ConnectionGraph::do_analysis()      <span style="color:green">&lt;-- Escape Analysiy</span></code>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="8" class="functionCall  indent_level_5">
+      <code>PhaseMacroExpand::eliminate_macro_nodes()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="2">&nbsp;</td>
+    <td colspan="7" class="functionCall  indent_level_6">
+      <code>PhaseMacroExpand::eliminate_allocate_node(AllocateNode*, ...)</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="1">&nbsp;</td>
+    <td colspan="6" class="functionCall  indent_level_7">
+      <code><mark>PhaseMacroExpand::process_users_of_allocation()</mark></code>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="8" class="functionCall  indent_level_5">
+      <code>PhaseMacroExpand::expand_macro_nodes()</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="2">&nbsp;</td>
+    <td colspan="7" class="functionCall  indent_level_6">
+    <code>PhaseMacroExpand::expand_arraycopy_node(ArrayCopyNode*)</code>
+    </td>
+  </tr>
+  <tr>
+    <td rowspan="1">&nbsp;</td>
+    <td colspan="6" class="functionCall  indent_level_7">
+    <code><mark>PhaseMacroExpand::generate_arraycopy(ArrayCopyNode*, ...)</mark></code>
+    </td>
+  </tr>
+</table>
+          </section>
+
+<!--
+
+// ==============================inline_arraycopy=======================
+// public static native void java.lang.System.arraycopy(Object src,  int  srcPos,
+//                                                      Object dest, int destPos,
+//                                                      int length);
+bool LibraryCallKit::inline_arraycopy() {
+  ...
+  // The following tests must be performed
+  // (1) src and dest are arrays.
+  // (2) src and dest arrays must have elements of the same BasicType
+  // (3) src and dest must not be null.
+  // (4) src_offset must not be negative.
+  // (5) dest_offset must not be negative.
+  // (6) length must not be negative.
+  // (7) src_offset + length must not exceed length of src.
+  // (8) dest_offset + length must not exceed length of dest.
+  // (9) each element of an oop array must be assignable
+  ...
+    // (5) dest_offset must not be negative.
+    generate_negative_guard(dest_offset, slow_region);
+
+    // (7) src_offset + length must not exceed length of src.
+    generate_limit_guard(src_offset, length, load_array_length(src), slow_region);
+  ...
+  ArrayCopyNode* ac = ArrayCopyNode::make(...)
+
+
+// Process users of eliminated allocation.
+void PhaseMacroExpand::process_users_of_allocation(CallNode *alloc) {
+  ...
+  if (use->is_ArrayCopy()) {
+    // Disconnect ArrayCopy node
+
+
+Node* PhaseMacroExpand::generate_arraycopy(ArrayCopyNode *ac, AllocateArrayNode* alloc,
+  ...
+    // (6) length must not be negative.
+    generate_negative_guard(&local_ctrl, copy_length, slow_region);
+
+
+-->
+
+          <section style="padding: 0; height: 100%;">
+
+            <p style="text-align:left; margin: 0;"><code>src/share/vm/opto/library_call.cpp</code></p>
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="cpp" text-trim="true">
+<![CDATA[
+// System.arraycopy(Object src,int srcPos,Object dest,...);
+bool LibraryCallKit::inline_arraycopy() {
+  ...
+  // The following tests must be performed
+  // (1) src and dest are arrays.
+  // (2) src and dest array elems must have same BasicType
+  // (3) src and dest must not be null.
+  // (4) src_offset must not be negative.
+  // (5) dest_offset must not be negative.
+  // (6) length must not be negative.
+  // (7) src_offset + length must not exceed length of src.
+  ...
+   // (5) dest_offset must not be negative.
+   generate_negative_guard(dest_offset, slow_region);
+
+   // (7) src_offset + length must not exceed length of src.
+   generate_limit_guard(src_offset, length, ...);
+  ...
+  ArrayCopyNode* ac = ArrayCopyNode::make(...)
+
+]]>
+              </code>
+            </pre>
+          </section>
+
+
+          <section style="padding: 0; height: 100%;">
+
+            <p style="text-align:left; margin: 0;"><code>src/share/vm/opto/macro.cpp</code></p>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="cpp" text-trim="true">
+<![CDATA[
+// Process users of eliminated allocation.
+void PhaseMacroExpand::process_users_of_allocation(...) {
+  ...
+  if (use->is_ArrayCopy()) {
+    // Disconnect ArrayCopy node
+    ArrayCopyNode* ac = use->as_ArrayCopy();
+    ...
+    // Disconnect src: it can help find new opportunities
+    Node* src = ac->in(ArrayCopyNode::Src);
+]]>
+              </code>
+            </pre>
+
+            <p style="text-align:left; margin: 0;"><code>src/share/vm/opto/macroArrayCopy.cpp</code></p>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="cpp" text-trim="true">
+<![CDATA[
+// Used from several intrinsics:  System.arraycopy,
+// Object.clone (array subcase), and Arrays.copyOf[Range].
+Node* PhaseMacroExpand::generate_arraycopy(...) {
+  ...
+  // (6) length must not be negative.
+  generate_negative_guard(.., copy_length, slow_region);
+
+]]>
+              </code>
+            </pre>
+          </section>
+
+        </section>
+
+
+        <section style="height: 100%;">
+
+          <section>
+            <h2 style="text-transform: none;"><code>System.arraycopy()</code> - Specification</h2>
+
+            <img width="100%" class="plain" data-src="images/System_arracopy_ASE_ul.png" alt="System.arraycopy() API Definition"/>
+
+            <p>see <a href="http://docs.oracle.com/javase/8/docs/api/java/lang/System.html#arraycopy-java.lang.Object-int-java.lang.Object-int-int-">
+                http://docs.oracle.com/javase/8/docs/api/java/lang/System.html#arraycopy</a></p>
+
+          </section>
+
+          <section>
+            <h2 style="text-transform: none;"><code>System.arraycopy()</code> - Test (C1)</h2>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="java" text-trim="true">
+<![CDATA[
+public static boolean arrayCopy5(Object src, int length) {
+  try {
+    System.arraycopy(src, 3, new Object[8], 5, length);
+    return false;
+  } catch (ArrayStoreException e) {
+    return true;
+  }
+}
+
+public static void main(String args[]) {
+  for (int i = 0; i < 20_000; i++) {
+    if (arrayCopy4(new int[128], 0) == false) {
+      System.out.println("Error in iteration " + i);
+      System.out.println("Expected ArrayStoreExeption");
+    }
+  }
+]]>
+              </code>
+            </pre>
+          </section>
+
+          <section>
+            <h2 style="text-transform: none;">Violating the Specification (C1)</h2>
+
+            <pre class="big noshadow" style="height:100%; margin: 0;" data-trim="true">
+              <code class="terminal" data-trim="true" data-noescape="true" style="height:100%">
+$ java \
+  org.simonis.ScalarReplacement arrayCopy5                 
+<span class="fragment">Error in iteration 256
+Expected ArrayStoreException
+
+$ </span><span class="fragment">java -Xint \
+  org.simonis.ScalarReplacement arrayCopy5                 
+
+</span><span class="fragment">$ </span><span class="fragment">java -XX:-TieredCompilation \
+  org.simonis.ScalarReplacement arrayCopy5</span>
+<span class="fragment">
+$ </span>
+              </code>
+            </pre>
+          </section>
+
+          <section>
+            <h2 style="text-transform: none;">Violating the Specification (C1)</h2>
+
+            <p style="text-align:left; margin: 0;"><code>src/cpu/x86/vm/c1_LIRAssembler_x86.cpp</code></p>
+
+            <pre class="big noshadow" data-trim="true">
+              <code class="cpp" text-trim="true">
+<![CDATA[
+// This code replaces a call to arraycopy
+void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {  
+  ...
+  // check if negative
+  if (flags & LIR_OpArrayCopy::length_positive_check) {
+    __ testl(length, length);
+    __ jcc(Assembler::less, *stub->entry());
+    __ jcc(Assembler::zero, *stub->continuation()); // <---
+  }
+  // check if array element types are compatible
+  if (flags & LIR_OpArrayCopy::type_check) {
+  ...
+  address entry = StubRoutines::select_arraycopy_function()
+  __ call_VM_leaf(entry, 0);
+  __ bind(*stub->continuation());                   // <---
+]]>
+              </code>
+            </pre>
+          </section>
+
+        </section>
+
+
+        <section>
+          <h3 style="text-transform: none;"><a href="https://bugs.openjdk.java.net/browse/JDK-8159611">https://bugs.openjdk.java.net/browse/JDK-8159611</a></h3>
+          <img class="plain" data-src="images/8159611_ArrayCopy.png" alt="JDK-8159611: C2: ArrayCopy elimination skips required parameter checks"/>
+        </section>
+
+
+      </div>
+
+    </div>
+
+    <script src="reveal.js/lib/js/head.min.js"></script>
+    <script src="reveal.js/js/reveal.js"></script>
+
+    <script>
+
+      // Full list of configuration options available at:
+      // https://github.com/hakimel/reveal.js#configuration
+      Reveal.initialize({
+        width: 1024,
+        height: 768,
+        //width: 1280,
+        //height: 720,
+        //width: 1366,
+        //height: 768,
+        //width: 1920,
+        //height: 1080,
+        margin: 0.1,
+        controls: true,
+        progress: true,
+        history: true,
+        center: true,
+
+        transition: 'none', // none/fade/slide/convex/concave/zoom
+
+        // Optional reveal.js plugins
+        dependencies: [
+          { src: 'reveal.js/lib/js/classList.js', condition: function() { return !document.body.classList; } },
+          { src: 'reveal.js/plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+          { src: 'reveal.js/plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+          { src: 'reveal.js/plugin/highlight/highlight_9.7.0.js', async: true, condition: function() { return !!document.querySelector( 'pre code' ); }, callback: function() {
+
+hljs.registerLanguage('terminal', function(hljs) {
+  return {
+    contains: [
+      hljs.C_LINE_COMMENT_MODE,
+      {
+        className: 'title',
+        lexemes: /[$()>_a-zA-Z0-9]+/,
+        keywords: "$ (gdb)",
+        begin: /^\$ |\(gdb\)/,
+        end: /[^\\]\n/,
+	contains: [
+          hljs.COMMENT('//', '$', { endsParent: true })
+	]
+      }
+    ]
+  }
+});
+
+hljs.initHighlightingOnLoad(); } },
+          { src: 'reveal.js/plugin/zoom-js/zoom.js', async: true },
+          { src: 'reveal.js/plugin/notes/notes.js', async: true }
+        ]
+      });
+
+    </script>
+
+  </body>
+</html>
+
+<!--  LocalWords:  HotSpot scrollable px pre noshadow Volker Simonis builtin VM
+ -->
+<!--  LocalWords:  Observability Bytecode runtime bytecodes Ljava sayHello ns
+ -->
+<!--  LocalWords:  JBreak JVMTI JNI fPIC JDK traceMethodAgent cpp TTS Safepoint
+ -->
+<!--  LocalWords:  unboxing JIT JVM safepoints Intrinsify fff POSIX
+ -->
+<!--  LocalWords:  NullPointers StackOverflows SEH VEH AIX NPE GC td
+ -->
+<!--  LocalWords:  safepoint hljs hirarchy monospace arial helvetica
+ -->
+<!--  LocalWords:  ffffff functionCall darkblue javaCall darkgreen cp
+ -->
+<!--  LocalWords:  ffa rowspan setq inputStr substring resultStr kbd
+ -->
+<!--  LocalWords:  concat vhs Shoi Seffano Sreedhar Midkiff movl RBP
+ -->
+<!--  LocalWords:  CompileCommand compileonly RDX movq klass RAX addl
+ -->
+<!--  LocalWords:  showversion Xbatch PrintCompilation UseTLAB imull
+ -->
+<!--  LocalWords:  UseCompressedOops TieredCompilation scalarReplace
+ -->
+<!--  LocalWords:  PrintOptoAssembly DoEscapeAnalysis arraycopy alloc
+ -->
+<!--  LocalWords:  PrintEscapeAnalysis PrintEliminateAllocations
+ -->
+<!--  LocalWords:  IndexOutOfBoundsException ArrayCopy ArrayCopyNode
+ -->
+<!--  LocalWords:  AllocateArrayNode
+ -->
